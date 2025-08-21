@@ -300,6 +300,7 @@ export class ListenView extends LitElement {
         :host-context(body.has-glass) .outline-item,
         :host-context(body.has-glass) .request-item,
         :host-context(body.has-glass) .markdown-content,
+        :host-context(body.has-glass) .ask-button,
         :host-context(body.has-glass) .insights-container pre,
         :host-context(body.has-glass) .insights-container p code,
         :host-context(body.has-glass) .insights-container pre code {
@@ -320,7 +321,8 @@ export class ListenView extends LitElement {
         :host-context(body.has-glass) .copy-button:hover,
         :host-context(body.has-glass) .outline-item:hover,
         :host-context(body.has-glass) .request-item.clickable:hover,
-        :host-context(body.has-glass) .markdown-content:hover {
+        :host-context(body.has-glass) .markdown-content:hover,
+        :host-context(body.has-glass) .ask-button:hover {
             background: transparent !important;
             transform: none !important;
         }
@@ -383,7 +385,8 @@ export class ListenView extends LitElement {
         :host-context(body.has-glass) .copy-button:hover,
         :host-context(body.has-glass) .outline-item:hover,
         :host-context(body.has-glass) .request-item.clickable:hover,
-        :host-context(body.has-glass) .markdown-content:hover {
+        :host-context(body.has-glass) .markdown-content:hover,
+        :host-context(body.has-glass) .ask-button:hover {
             background: transparent !important;
             transform: none !important;
         }

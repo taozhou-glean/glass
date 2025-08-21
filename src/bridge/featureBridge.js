@@ -79,7 +79,10 @@ module.exports = {
     ipcMain.handle('ollama:shutdown', async (event, force = false) => await ollamaService.handleShutdown(force));
 
     // Ask
-    ipcMain.handle('ask:sendQuestionFromAsk', async (event, userPrompt) => await askService.sendMessage(userPrompt));
+    ipcMain.handle('ask:sendQuestionFromAsk', async (event, userPrompt, options = {}) => {
+      const { skipScreenshot = false } = options;
+      return await askService.sendMessage(userPrompt, [], skipScreenshot);
+    });
     ipcMain.handle('ask:sendQuestionFromSummary', async (event, userPrompt) => await askService.sendMessage(userPrompt));
     ipcMain.handle('ask:toggleAskButton', async () => await askService.toggleAskButton());
     ipcMain.handle('ask:closeAskWindow',  async () => await askService.closeAskWindow());
@@ -107,6 +110,8 @@ module.exports = {
         return { success: false, error: error.message };
       }
     });
+
+
 
     // ModelStateService
     ipcMain.handle('model:validate-key', async (e, { provider, key }) => await modelStateService.handleValidateKey(provider, key));

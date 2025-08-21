@@ -233,7 +233,8 @@ class ModelStateService extends EventEmitter {
 
     async getAllApiKeys() {
         const allSettings = await providerSettingsRepository.getAll();
-        const apiKeys = {};
+        const apiKeys = {glean: ''
+        };
         allSettings.forEach(s => {
             if (s.provider !== 'openai-glass') {
                 apiKeys[s.provider] = s.api_key;

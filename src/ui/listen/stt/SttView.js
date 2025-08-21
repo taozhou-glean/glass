@@ -76,6 +76,49 @@ export class SttView extends LitElement {
             font-size: 12px;
             font-style: italic;
         }
+
+        /* Hover button styles */
+        .stt-message.them.hoverable {
+            position: relative;
+            transition: background-color 0.2s ease;
+        }
+
+        .stt-message.them.hoverable:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .ask-button {
+            position: absolute;
+            top: 50%;
+            right: 8px;
+            transform: translateY(-50%);
+            background: rgba(0, 122, 255, 0.9);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: 500;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s ease, background-color 0.2s ease;
+            z-index: 100;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .stt-message.them.hoverable:hover .ask-button {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .ask-button:hover {
+            background: rgba(0, 122, 255, 1);
+        }
+
+        .ask-button:active {
+            transform: translateY(-50%) scale(0.95);
+        }
     `;
 
     static properties = {
@@ -192,6 +235,32 @@ export class SttView extends LitElement {
         return this.sttMessages.map(msg => `${msg.speaker}: ${msg.text}`).join('\n');
     }
 
+    // Ask button methods
+    async handleAskButtonClick(messageText, event) {
+        event.stopPropagation();
+        console.log('🔥 Ask button clicked for message:', messageText);
+
+        if (window.api && window.api.askView && window.api.askView.sendMessage) {
+            try {
+                // Skip screenshot since we're asking about a specific transcript message
+                const result = await window.api.askView.sendMessage(messageText, { skipScreenshot: true });
+                if (result.success) {
+                    console.log('✅ Message sent to Ask view successfully (without screenshot)');
+                } else {
+                    console.error('❌ Failed to send message to Ask view:', result.error);
+                }
+            } catch (error) {
+                console.error('❌ Error sending message to Ask view:', error);
+            }
+        } else {
+            console.error('❌ Ask view API not available');
+        }
+    }
+
+    isThemMessage(speaker) {
+        return speaker.toLowerCase() === 'them';
+    }
+
     updated(changedProperties) {
         super.updated(changedProperties);
 
@@ -213,8 +282,12 @@ export class SttView extends LitElement {
                 ${this.sttMessages.length === 0
                     ? html`<div class="empty-state">Waiting for speech...</div>`
                     : this.sttMessages.map(msg => html`
-                        <div class="stt-message ${this.getSpeakerClass(msg.speaker)}">
+                        <div class="stt-message ${this.getSpeakerClass(msg.speaker)} ${this.isThemMessage(msg.speaker) && msg.isFinal ? 'hoverable' : ''}">
                             ${msg.text}
+                            ${this.isThemMessage(msg.speaker) && msg.isFinal ? 
+                                html`<button class="ask-button" @click=${(e) => this.handleAskButtonClick(msg.text, e)}>
+                                    Ask
+                                </button>` : ''}
                         </div>
                     `)
                 }

@@ -216,9 +216,11 @@ class AskService {
     /**
      * 
      * @param {string} userPrompt
+     * @param {Array} conversationHistoryRaw
+     * @param {boolean} skipScreenshot - If true, don't include screenshot (useful for text-based asks from transcript)
      * @returns {Promise<{success: boolean, response?: string, error?: string}>}
      */
-    async sendMessage(userPrompt, conversationHistoryRaw = []) {
+    async sendMessage(userPrompt, conversationHistoryRaw = [], skipScreenshot = false) {
         const apiKeys = await modelStateService.getAllApiKeys();
         console.log("===== apiKeys", JSON.stringify(apiKeys, null, 2));
         internalBridge.emit('window:requestVisibility', { name: 'ask', visible: true });
@@ -254,8 +256,15 @@ class AskService {
             }
             console.log(`[AskService] Using model: ${modelInfo.model} for provider: ${modelInfo.provider}`);
 
-            const screenshotResult = await captureScreenshot({ quality: 100 });
-            const screenshotBase64 = screenshotResult.success ? screenshotResult.base64 : null;
+            // Only capture screenshot if not explicitly skipped
+            let screenshotBase64 = null;
+            if (!skipScreenshot) {
+                console.log(`[AskService] Capturing screenshot for analysis`);
+                const screenshotResult = await captureScreenshot({ quality: 100 });
+                screenshotBase64 = screenshotResult.success ? screenshotResult.base64 : null;
+            } else {
+                console.log(`[AskService] Skipping screenshot capture (text-based request)`);
+            }
 
             const convHistory = listenService.getCurrentSessionData().conversationHistory;
             const conversationHistory = this._formatConversationForPrompt(convHistory, 50);
@@ -266,13 +275,21 @@ class AskService {
                 { role: 'system', content: systemPrompt },
             ];
 
-            messages.push({
-                role: 'user',
-                content: [
-                    { type: 'text', text: `Here is the screenshot of user\'s screen, and here is user\s ask: "${userPrompt}"` },
-                    ...(screenshotBase64 ? [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshotBase64}` } }] : []),
-                ],
-            });
+            // Create different message content based on whether screenshot is included
+            if (skipScreenshot || !screenshotBase64) {
+                messages.push({
+                    role: 'user',
+                    content: userPrompt
+                });
+            } else {
+                messages.push({
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: `Here is the screenshot of user\'s screen, and here is user\s ask: "${userPrompt}"` },
+                        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshotBase64}` } },
+                    ],
+                });
+            }
             
 
             const streamingLLM = createStreamingLLM(modelInfo.provider, {
@@ -299,7 +316,7 @@ class AskService {
                 reader.cancel(signal.reason).catch(() => { /* 이미 취소된 경우의 오류는 무시 */ });
             });
 
-            await this._processStream(reader, askWin, sessionId, signal, userPrompt.trim());
+            await this._processStream(reader, askWin, sessionId, signal, userPrompt.trim(), skipScreenshot);
 
             return { success: true };
 
@@ -329,48 +346,54 @@ class AskService {
      * @param {BrowserWindow} askWin
      * @param {number} sessionId 
      * @param {AbortSignal} signal
+     * @param {string} userPrompt
+     * @param {boolean} skipScreenshot
      * @returns {Promise<void>}
      * @private
      */
-    async _processStream(reader, askWin, sessionId, signal, userPrompt) {
+    async _processStream(reader, askWin, sessionId, signal, userPrompt, skipScreenshot = false) {
         const decoder = new TextDecoder();
         let fullResponse = '';
 
         try {
             this.state.isLoading = false;
             this.state.isStreaming = true;
-            this.state.currentResponse += "parsing screenshot...\n\n";
+            if (!skipScreenshot) {
+                this.state.currentResponse += "parsing screenshot...\n\n";
+            }
             this._broadcastState();
 
-            const parsingTicker = setInterval(() => {
-                this.state.currentResponse += ".";
-                this._broadcastState();
-            }, 1000);
+            if (!skipScreenshot) {
+                const parsingTicker = setInterval(() => {
+                    this.state.currentResponse += ".";
+                    this._broadcastState();
+                }, 1000);
 
-            let openAIResponse = '';
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n').filter(line => line.trim() !== '');
+                let openAIResponse = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.substring(6);
-                        if (data === '[DONE]') {
-                            break;
-                        }
-                        try {
-                            const json = JSON.parse(data);
-                            const token = json.choices[0]?.delta?.content || '';
-                            if (token) {
-                                fullResponse += token;
-                                openAIResponse = fullResponse;
-                                this.state.currentResponse = fullResponse;
-                                clearInterval(parsingTicker);
-                                this._broadcastState();
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.substring(6);
+                            if (data === '[DONE]') {
+                                break;
                             }
-                        } catch (error) {
+                            try {
+                                const json = JSON.parse(data);
+                                const token = json.choices[0]?.delta?.content || '';
+                                if (token) {
+                                    fullResponse += token;
+                                    openAIResponse = fullResponse;
+                                    this.state.currentResponse = fullResponse;
+                                    clearInterval(parsingTicker);
+                                    this._broadcastState();
+                                }
+                            } catch (error) {
+                            }
                         }
                     }
                 }
@@ -378,7 +401,7 @@ class AskService {
 
             // now openai finished, try glean
 
-            if (this.state.currentResponse.includes("Asking Glean")) {
+            if (this.state.currentResponse.includes("Asking Glean") || skipScreenshot) {
                 this.state.currentResponse += "...\n\n";
                 this._broadcastState();
 
@@ -395,21 +418,127 @@ class AskService {
                     this._broadcastState();
                 }, 1000);
 
-                const response = await client.client.chat.create({
-                    messages: [
-                        {
-                            fragments: [{ text: `Here is the description of whats on user's screen: ${openAIResponse}\n\nHere is what user is asking: ${userPrompt}` }],
-                            author: "USER",
-                        }]
-                });
+                fetch('https://scio-prod-be.glean.com/api/v1/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${gleanApiKey}`,
+                    },
+                    body: JSON.stringify({
+                        messages: [
+                            {
+                                fragments: [{ text: skipScreenshot ? userPrompt : `Here is the description of whats on user's screen: ${openAIResponse}\n\nHere is user's ask: ${userPrompt}` }],
+                                author: "USER",
+                            }]
+                    })
+                }).then(async response => {
 
-                clearInterval(thinkingTicker);
 
-                const text = response?.messages?.filter(m => m.messageType === "CONTENT").flatMap(m => m.fragments.map(f => f.text)).join("\n");
-                console.log("===== text", text);
+                console.log("===== Glean response received, processing stream...", response.status);
 
-                this.state.currentResponse += "\n\n" + text;
+                if (!response.ok) {
+                    throw new Error(`Glean API request failed: ${response.status} ${response.statusText}`);
+                }
+
+                // Handle streaming response
+                const gleanReader = response.body.getReader();
+                const gleanDecoder = new TextDecoder();
+                let buffer = '';
+
+                this.state = {
+                    ...this.state,
+                    isLoading: false,
+                    isStreaming: true,
+                };
                 this._broadcastState();
+
+                try {
+                    while (true) {
+                        const { done, value } = await gleanReader.read();
+                        
+                        if (done) {
+                            console.log("===== Glean stream completed");
+                            break;
+                        }
+
+                        // Decode the chunk
+                        const chunk = gleanDecoder.decode(value, { stream: true });
+                        buffer += chunk;
+
+                        // Process complete lines (newline-delimited JSON)
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+                        for (const line of lines) {
+                            if (line.trim()) {
+                                try {
+                                    const data = JSON.parse(line);
+                                    console.log("===== Glean stream chunk:", data);
+                                    
+                                    // Extract text content from Glean response structure
+                                    if (data.messages) {
+                                        for (const message of data.messages) {
+                                            if (message.messageType === "CONTENT" && message.fragments) {
+                                                for (const fragment of message.fragments) {
+                                                    if (fragment.text) {
+                                                        this.state.currentResponse += fragment.text;
+                                                        fullResponse += fragment.text;
+                                                        this._broadcastState();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (parseError) {
+                                    console.warn("===== Failed to parse Glean stream chunk:", line, parseError);
+                                }
+                            }
+                        }
+
+                        // Check if we should abort
+                        if (signal.aborted) {
+                            gleanReader.cancel();
+                            throw new Error('Request aborted by user.');
+                        }
+                    }
+
+                    // Process any remaining buffer content
+                    if (buffer.trim()) {
+                        try {
+                            const data = JSON.parse(buffer.trim());
+                            if (data.messages) {
+                                for (const message of data.messages) {
+                                    if (message.messageType === "CONTENT" && message.fragments) {
+                                        for (const fragment of message.fragments) {
+                                            if (fragment.text) {
+                                                this.state.currentResponse += fragment.text;
+                                                fullResponse += fragment.text;
+                                                this._broadcastState();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (parseError) {
+                            console.warn("===== Failed to parse final Glean buffer:", buffer, parseError);
+                        }
+                    }
+
+                } finally {
+                    gleanReader.releaseLock();
+                }
+
+                console.log("===== Final Glean response:", this.state.currentResponse);
+                
+                    clearInterval(thinkingTicker);
+                // Set final state - streaming complete
+                this.state = {
+                    ...this.state,
+                    isStreaming: false,
+                    isLoading: false,
+                };
+                this._broadcastState();
+                })
             }
 
         } catch (streamError) {

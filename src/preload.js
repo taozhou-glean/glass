@@ -151,7 +151,7 @@ contextBridge.exposeInMainWorld('api', {
     adjustWindowHeight: (winName, height) => ipcRenderer.invoke('adjust-window-height', { winName, height }),
     
     // Message Handling
-    sendMessage: (text) => ipcRenderer.invoke('ask:sendQuestionFromAsk', text),
+    sendMessage: (text, options = {}) => ipcRenderer.invoke('ask:sendQuestionFromAsk', text, options),
 
     // Listeners
     onAskStateUpdate: (callback) => ipcRenderer.on('ask:stateUpdate', callback),
