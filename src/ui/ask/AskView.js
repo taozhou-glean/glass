@@ -1385,7 +1385,7 @@ export class AskView extends LitElement {
                     <input
                         type="text"
                         id="textInput"
-                        placeholder="Ask about your screen or audio"
+                        placeholder="Ask about your screen or your current recordings"
                         @keydown=${this.handleTextKeydown}
                         @focus=${this.handleInputFocus}
                     />

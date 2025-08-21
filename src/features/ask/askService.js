@@ -3,6 +3,7 @@ const { createStreamingLLM } = require('../common/ai/factory');
 // Lazy require helper to avoid circular dependency issues
 const getWindowManager = () => require('../../window/windowManager');
 const internalBridge = require('../../bridge/internalBridge');
+const { Glean } = require("@gleanwork/api-client");
 
 const getWindowPool = () => {
     try {
@@ -22,6 +23,7 @@ const util = require('util');
 const execFile = util.promisify(require('child_process').execFile);
 const { desktopCapturer } = require('electron');
 const modelStateService = require('../common/services/modelStateService');
+const listenService = require('../listen/listenService');
 
 // Try to load sharp, but don't fail if it's not available
 let sharp;
@@ -40,7 +42,7 @@ async function captureScreenshot(options = {}) {
         try {
             const tempPath = path.join(os.tmpdir(), `screenshot-${Date.now()}.jpg`);
 
-            await execFile('screencapture', ['-x', '-t', 'jpg', tempPath]);
+            await execFile('screencapture', ['-x', '-C', '-t', 'jpg', tempPath]);
 
             const imageBuffer = await fs.promises.readFile(tempPath);
             await fs.promises.unlink(tempPath);
@@ -50,7 +52,7 @@ async function captureScreenshot(options = {}) {
                     // Try using sharp for optimal image processing
                     const resizedBuffer = await sharp(imageBuffer)
                         .resize({ height: 384 })
-                        .jpeg({ quality: 80 })
+                        .jpeg({ quality: options.quality || 80 })
                         .toBuffer();
 
                     const base64 = resizedBuffer.toString('base64');
@@ -68,11 +70,11 @@ async function captureScreenshot(options = {}) {
                     console.warn('Sharp module failed, falling back to basic image processing:', sharpError.message);
                 }
             }
-            
+
             // Fallback: Return the original image without resizing
             console.log('[AskService] Using fallback image processing (no resize/compression)');
             const base64 = imageBuffer.toString('base64');
-            
+
             lastScreenshot = {
                 base64,
                 width: null, // We don't have metadata without sharp
@@ -175,39 +177,40 @@ class AskService {
         }
     }
 
-    async closeAskWindow () {
-            if (this.abortController) {
-                this.abortController.abort('Window closed by user');
-                this.abortController = null;
-            }
-    
-            this.state = {
-                isVisible      : false,
-                isLoading      : false,
-                isStreaming    : false,
-                currentQuestion: '',
-                currentResponse: '',
-                showTextInput  : true,
-            };
-            this._broadcastState();
-    
-            internalBridge.emit('window:requestVisibility', { name: 'ask', visible: false });
-    
-            return { success: true };
+    async closeAskWindow() {
+        if (this.abortController) {
+            this.abortController.abort('Window closed by user');
+            this.abortController = null;
         }
-    
+
+        this.state = {
+            isVisible: false,
+            isLoading: false,
+            isStreaming: false,
+            currentQuestion: '',
+            currentResponse: '',
+            showTextInput: true,
+        };
+        this._broadcastState();
+
+        internalBridge.emit('window:requestVisibility', { name: 'ask', visible: false });
+
+        return { success: true };
+    }
+
 
     /**
      * 
      * @param {string[]} conversationTexts
+     * @param {number} maxTurns
      * @returns {string}
      * @private
      */
-    _formatConversationForPrompt(conversationTexts) {
+    _formatConversationForPrompt(conversationTexts, maxTurns = 30) {
         if (!conversationTexts || conversationTexts.length === 0) {
             return 'No conversation history available.';
         }
-        return conversationTexts.slice(-30).join('\n');
+        return conversationTexts.slice(-maxTurns).join('\n');
     }
 
     /**
@@ -215,7 +218,9 @@ class AskService {
      * @param {string} userPrompt
      * @returns {Promise<{success: boolean, response?: string, error?: string}>}
      */
-    async sendMessage(userPrompt, conversationHistoryRaw=[]) {
+    async sendMessage(userPrompt, conversationHistoryRaw = []) {
+        const apiKeys = await modelStateService.getAllApiKeys();
+        console.log("===== apiKeys", JSON.stringify(apiKeys, null, 2));
         internalBridge.emit('window:requestVisibility', { name: 'ask', visible: true });
         this.state = {
             ...this.state,
@@ -242,37 +247,34 @@ class AskService {
             sessionId = await sessionRepository.getOrCreateActive('ask');
             await askRepository.addAiMessage({ sessionId, role: 'user', content: userPrompt.trim() });
             console.log(`[AskService] DB: Saved user prompt to session ${sessionId}`);
-            
+
             const modelInfo = await modelStateService.getCurrentModelInfo('llm');
             if (!modelInfo || !modelInfo.apiKey) {
                 throw new Error('AI model or API key not configured.');
             }
             console.log(`[AskService] Using model: ${modelInfo.model} for provider: ${modelInfo.provider}`);
 
-            const screenshotResult = await captureScreenshot({ quality: 'medium' });
+            const screenshotResult = await captureScreenshot({ quality: 100 });
             const screenshotBase64 = screenshotResult.success ? screenshotResult.base64 : null;
 
-            const conversationHistory = this._formatConversationForPrompt(conversationHistoryRaw);
+            const convHistory = listenService.getCurrentSessionData().conversationHistory;
+            const conversationHistory = this._formatConversationForPrompt(convHistory, 50);
 
             const systemPrompt = getSystemPrompt('pickle_glass_analysis', conversationHistory, false);
 
             const messages = [
                 { role: 'system', content: systemPrompt },
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: `User Request: ${userPrompt.trim()}` },
-                    ],
-                },
             ];
 
-            if (screenshotBase64) {
-                messages[1].content.push({
-                    type: 'image_url',
-                    image_url: { url: `data:image/jpeg;base64,${screenshotBase64}` },
-                });
-            }
+            messages.push({
+                role: 'user',
+                content: [
+                    { type: 'text', text: `Here is the screenshot of user\'s screen, and here is user\s ask: "${userPrompt}"` },
+                    ...(screenshotBase64 ? [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshotBase64}` } }] : []),
+                ],
+            });
             
+
             const streamingLLM = createStreamingLLM(modelInfo.provider, {
                 apiKey: modelInfo.apiKey,
                 model: modelInfo.model,
@@ -282,61 +284,24 @@ class AskService {
                 portkeyVirtualKey: modelInfo.provider === 'openai-glass' ? modelInfo.apiKey : undefined,
             });
 
-            try {
-                const response = await streamingLLM.streamChat(messages);
-                const askWin = getWindowPool()?.get('ask');
+            const response = await streamingLLM.streamChat(messages);
+            const askWin = getWindowPool()?.get('ask');
 
-                if (!askWin || askWin.isDestroyed()) {
-                    console.error("[AskService] Ask window is not available to send stream to.");
-                    response.body.getReader().cancel();
-                    return { success: false, error: 'Ask window is not available.' };
-                }
-
-                const reader = response.body.getReader();
-                signal.addEventListener('abort', () => {
-                    console.log(`[AskService] Aborting stream reader. Reason: ${signal.reason}`);
-                    reader.cancel(signal.reason).catch(() => { /* 이미 취소된 경우의 오류는 무시 */ });
-                });
-
-                await this._processStream(reader, askWin, sessionId, signal);
-                return { success: true };
-
-            } catch (multimodalError) {
-                // 멀티모달 요청이 실패했고 스크린샷이 포함되어 있다면 텍스트만으로 재시도
-                if (screenshotBase64 && this._isMultimodalError(multimodalError)) {
-                    console.log(`[AskService] Multimodal request failed, retrying with text-only: ${multimodalError.message}`);
-                    
-                    // 텍스트만으로 메시지 재구성
-                    const textOnlyMessages = [
-                        { role: 'system', content: systemPrompt },
-                        {
-                            role: 'user',
-                            content: `User Request: ${userPrompt.trim()}`
-                        }
-                    ];
-
-                    const fallbackResponse = await streamingLLM.streamChat(textOnlyMessages);
-                    const askWin = getWindowPool()?.get('ask');
-
-                    if (!askWin || askWin.isDestroyed()) {
-                        console.error("[AskService] Ask window is not available for fallback response.");
-                        fallbackResponse.body.getReader().cancel();
-                        return { success: false, error: 'Ask window is not available.' };
-                    }
-
-                    const fallbackReader = fallbackResponse.body.getReader();
-                    signal.addEventListener('abort', () => {
-                        console.log(`[AskService] Aborting fallback stream reader. Reason: ${signal.reason}`);
-                        fallbackReader.cancel(signal.reason).catch(() => {});
-                    });
-
-                    await this._processStream(fallbackReader, askWin, sessionId, signal);
-                    return { success: true };
-                } else {
-                    // 다른 종류의 에러이거나 스크린샷이 없었다면 그대로 throw
-                    throw multimodalError;
-                }
+            if (!askWin || askWin.isDestroyed()) {
+                console.error("[AskService] Ask window is not available to send stream to.");
+                response.body.getReader().cancel();
+                return { success: false, error: 'Ask window is not available.' };
             }
+
+            const reader = response.body.getReader();
+            signal.addEventListener('abort', () => {
+                console.log(`[AskService] Aborting stream reader. Reason: ${signal.reason}`);
+                reader.cancel(signal.reason).catch(() => { /* 이미 취소된 경우의 오류는 무시 */ });
+            });
+
+            await this._processStream(reader, askWin, sessionId, signal, userPrompt.trim());
+
+            return { success: true };
 
         } catch (error) {
             console.error('[AskService] Error during message processing:', error);
@@ -367,18 +332,25 @@ class AskService {
      * @returns {Promise<void>}
      * @private
      */
-    async _processStream(reader, askWin, sessionId, signal) {
+    async _processStream(reader, askWin, sessionId, signal, userPrompt) {
         const decoder = new TextDecoder();
         let fullResponse = '';
 
         try {
             this.state.isLoading = false;
             this.state.isStreaming = true;
+            this.state.currentResponse += "parsing screenshot...\n\n";
             this._broadcastState();
+
+            const parsingTicker = setInterval(() => {
+                this.state.currentResponse += ".";
+                this._broadcastState();
+            }, 1000);
+
+            let openAIResponse = '';
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
                 const chunk = decoder.decode(value);
                 const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
@@ -386,14 +358,16 @@ class AskService {
                     if (line.startsWith('data: ')) {
                         const data = line.substring(6);
                         if (data === '[DONE]') {
-                            return; 
+                            break;
                         }
                         try {
                             const json = JSON.parse(data);
                             const token = json.choices[0]?.delta?.content || '';
                             if (token) {
                                 fullResponse += token;
+                                openAIResponse = fullResponse;
                                 this.state.currentResponse = fullResponse;
+                                clearInterval(parsingTicker);
                                 this._broadcastState();
                             }
                         } catch (error) {
@@ -401,6 +375,43 @@ class AskService {
                     }
                 }
             }
+
+            // now openai finished, try glean
+
+            if (this.state.currentResponse.includes("Asking Glean")) {
+                this.state.currentResponse += "...\n\n";
+                this._broadcastState();
+
+                const apiKeys = await modelStateService.getAllApiKeys();
+                const gleanApiKey = apiKeys.glean;
+                console.log("===== gleanApiKey", gleanApiKey);
+                const client = new Glean({
+                    apiToken: gleanApiKey,
+                    instance: 'scio-prod',
+                });
+
+                const thinkingTicker = setInterval(() => {
+                    this.state.currentResponse += ".";
+                    this._broadcastState();
+                }, 1000);
+
+                const response = await client.client.chat.create({
+                    messages: [
+                        {
+                            fragments: [{ text: `Here is the description of whats on user's screen: ${openAIResponse}\n\nHere is what user is asking: ${userPrompt}` }],
+                            author: "USER",
+                        }]
+                });
+
+                clearInterval(thinkingTicker);
+
+                const text = response?.messages?.filter(m => m.messageType === "CONTENT").flatMap(m => m.fragments.map(f => f.text)).join("\n");
+                console.log("===== text", text);
+
+                this.state.currentResponse += "\n\n" + text;
+                this._broadcastState();
+            }
+
         } catch (streamError) {
             if (signal.aborted) {
                 console.log(`[AskService] Stream reading was intentionally cancelled. Reason: ${signal.reason}`);
@@ -415,10 +426,10 @@ class AskService {
             this.state.currentResponse = fullResponse;
             this._broadcastState();
             if (fullResponse) {
-                 try {
+                try {
                     await askRepository.addAiMessage({ sessionId, role: 'assistant', content: fullResponse });
                     console.log(`[AskService] DB: Saved partial or full assistant response to session ${sessionId} after stream ended.`);
-                } catch(dbError) {
+                } catch (dbError) {
                     console.error("[AskService] DB: Failed to save assistant response after stream ended:", dbError);
                 }
             }

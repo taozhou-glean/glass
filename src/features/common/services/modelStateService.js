@@ -342,6 +342,7 @@ class ModelStateService extends EventEmitter {
             if (!setting.api_key) continue;
 
             const providerId = setting.provider;
+            if (providerId === 'glean') continue;
             if (providerId === 'ollama' && type === 'llm') {
                 const installed = ollamaModelRepository.getInstalledModels();
                 available.push(...installed.map(m => ({ id: m.name, name: m.name })));

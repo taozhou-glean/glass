@@ -513,7 +513,7 @@ export class SettingsView extends LitElement {
         //////// after_modelStateService ////////
         this.shortcuts = {};
         this.firebaseUser = null;
-        this.apiKeys = { openai: '', gemini: '', anthropic: '', whisper: '' };
+        this.apiKeys = { openai: '', glean: '' };
         this.providerConfig = {};
         this.isLoading = true;
         this.isContentProtectionOn = true;
@@ -1249,11 +1249,18 @@ export class SettingsView extends LitElement {
                         }
                         
                         // Regular providers
+                        const isGlean = id === 'glean';
+                        const labelText = isGlean ? 'Glean Token' : `${config.name} API Key`;
+                        const placeholderText = loggedIn
+                            ? "Using Pickle's Key"
+                            : isGlean
+                                ? 'Enter Glean Token'
+                                : `Enter ${config.name} API Key`;
                         return html`
                         <div class="provider-key-group">
-                            <label for="key-input-${id}">${config.name} API Key</label>
+                            <label for="key-input-${id}">${labelText}</label>
                             <input type="password" id="key-input-${id}"
-                                placeholder=${loggedIn ? "Using Pickle's Key" : `Enter ${config.name} API Key`} 
+                                placeholder=${placeholderText}
                                 .value=${this.apiKeys[id] || ''}
                             >
                             <div class="key-buttons">

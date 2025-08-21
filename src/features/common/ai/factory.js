@@ -29,69 +29,12 @@ const PROVIDERS = {
       ],
   },
 
-  'openai-glass': {
-      name: 'OpenAI (Glass)',
-      handler: () => require("./providers/openai"),
-      llmModels: [
-          { id: 'gpt-4.1-glass', name: 'GPT-4.1 (glass)' },
-      ],
-      sttModels: [
-          { id: 'gpt-4o-mini-transcribe-glass', name: 'GPT-4o Mini Transcribe (glass)' }
-      ],
-  },
-  'gemini': {
-      name: 'Gemini',
-      handler: () => require("./providers/gemini"),
-      llmModels: [
-          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-      ],
-      sttModels: [
-          { id: 'gemini-live-2.5-flash-preview', name: 'Gemini Live 2.5 Flash' }
-      ],
-  },
-  'anthropic': {
-      name: 'Anthropic',
-      handler: () => require("./providers/anthropic"),
-      llmModels: [
-          { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
-      ],
-      sttModels: [],
-  },
-  'deepgram': {
-    name: 'Deepgram',
-    handler: () => require("./providers/deepgram"),
-    llmModels: [],
-    sttModels: [
-        { id: 'nova-3', name: 'Nova-3 (General)' },
-        ],
-    },
-  'ollama': {
-      name: 'Ollama (Local)',
-      handler: () => require("./providers/ollama"),
-      llmModels: [], // Dynamic models populated from installed Ollama models
-      sttModels: [], // Ollama doesn't support STT yet
-  },
-  'whisper': {
-      name: 'Whisper (Local)',
-      handler: () => {
-          // This needs to remain a function due to its conditional logic for renderer/main process
-          if (typeof window === 'undefined') {
-              const { WhisperProvider } = require("./providers/whisper");
-              return new WhisperProvider();
-          }
-          // Return a dummy object for the renderer process
-          return {
-              validateApiKey: async () => ({ success: true }), // Mock validate for renderer
-              createSTT: () => { throw new Error('Whisper STT is only available in main process'); },
-          };
-      },
+  // Token-only integration (no models). Used to store a Glean access token.
+  'glean': {
+      name: 'Glean',
+      handler: () => ({}),
       llmModels: [],
-      sttModels: [
-          { id: 'whisper-tiny', name: 'Whisper Tiny (39M)' },
-          { id: 'whisper-base', name: 'Whisper Base (74M)' },
-          { id: 'whisper-small', name: 'Whisper Small (244M)' },
-          { id: 'whisper-medium', name: 'Whisper Medium (769M)' },
-      ],
+      sttModels: [],
   },
 };
 
