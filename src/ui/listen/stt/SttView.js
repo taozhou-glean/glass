@@ -87,10 +87,19 @@ export class SttView extends LitElement {
             background: rgba(255, 255, 255, 0.15);
         }
 
+        /* Add hover styles for me messages */
+        .stt-message.me.hoverable {
+            position: relative;
+            transition: background-color 0.2s ease;
+        }
+
+        .stt-message.me.hoverable:hover {
+            background: rgba(0, 122, 255, 0.9);
+        }
+
         .ask-button {
             position: absolute;
             top: 50%;
-            right: 8px;
             transform: translateY(-50%);
             background: rgba(0, 122, 255, 0.9);
             color: white;
@@ -107,7 +116,18 @@ export class SttView extends LitElement {
             user-select: none;
         }
 
-        .stt-message.them.hoverable:hover .ask-button {
+        /* Position ask button on the right for them messages */
+        .stt-message.them.hoverable .ask-button {
+            right: 8px;
+        }
+
+        /* Position ask button on the left for me messages */
+        .stt-message.me.hoverable .ask-button {
+            left: 8px;
+        }
+
+        .stt-message.them.hoverable:hover .ask-button,
+        .stt-message.me.hoverable:hover .ask-button {
             opacity: 1;
             pointer-events: auto;
         }
@@ -261,6 +281,16 @@ export class SttView extends LitElement {
         return speaker.toLowerCase() === 'them';
     }
 
+    // Helper method to check if it's a me message
+    isMeMessage(speaker) {
+        return speaker.toLowerCase() === 'me';
+    }
+
+    // Helper method to check if a message should show ask button
+    shouldShowAskButton(speaker, isFinal) {
+        return isFinal && (this.isThemMessage(speaker) || this.isMeMessage(speaker));
+    }
+
     updated(changedProperties) {
         super.updated(changedProperties);
 
@@ -282,9 +312,9 @@ export class SttView extends LitElement {
                 ${this.sttMessages.length === 0
                     ? html`<div class="empty-state">Waiting for speech...</div>`
                     : this.sttMessages.map(msg => html`
-                        <div class="stt-message ${this.getSpeakerClass(msg.speaker)} ${this.isThemMessage(msg.speaker) && msg.isFinal ? 'hoverable' : ''}">
+                        <div class="stt-message ${this.getSpeakerClass(msg.speaker)} ${this.shouldShowAskButton(msg.speaker, msg.isFinal) ? 'hoverable' : ''}">
                             ${msg.text}
-                            ${this.isThemMessage(msg.speaker) && msg.isFinal ? 
+                            ${this.shouldShowAskButton(msg.speaker, msg.isFinal) ? 
                                 html`<button class="ask-button" @click=${(e) => this.handleAskButtonClick(msg.text, e)}>
                                     Ask
                                 </button>` : ''}

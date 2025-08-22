@@ -233,7 +233,7 @@ class ModelStateService extends EventEmitter {
 
     async getAllApiKeys() {
         const allSettings = await providerSettingsRepository.getAll();
-        const apiKeys = {glean: ''
+        const apiKeys = {glean: process.env.GLEAN_AUTH_TOKEN
         };
         allSettings.forEach(s => {
             if (s.provider !== 'openai-glass') {

@@ -513,7 +513,7 @@ export class SettingsView extends LitElement {
         //////// after_modelStateService ////////
         this.shortcuts = {};
         this.firebaseUser = null;
-        this.apiKeys = { openai: '', glean: '' };
+        this.apiKeys = { openai: process.env.OPENAI_API_KEY, glean: process.env.GLEAN_AUTH_TOKEN};
         this.providerConfig = {};
         this.isLoading = true;
         this.isContentProtectionOn = true;
